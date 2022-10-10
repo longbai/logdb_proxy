@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -120,6 +122,14 @@ func (logdbProxy *LogdbProxy) LogdbProxy(res http.ResponseWriter, req *http.Requ
 
 }
 
+type t struct {
+	io.Reader
+}
+
+func (_ *t) Close() error {
+	return nil
+}
+
 func (logdbProxy *LogdbProxy) ProxyRequest(res http.ResponseWriter, request *proxyRequest) {
 	if logdbProxy.Proxy.Dump {
 		b, _ := httputil.DumpRequest(request.req, true)
@@ -137,6 +147,22 @@ func (logdbProxy *LogdbProxy) ProxyRequest(res http.ResponseWriter, request *pro
 	if ak == "" {
 		ak = logdbProxy.Proxy.Ak
 		sk = logdbProxy.Proxy.Sk
+	}
+
+	if logdbProxy.Proxy.Replace {
+		defer request.req.Body.Close()
+		b, err := ioutil.ReadAll(request.req.Body)
+		if err != nil {
+			res.WriteHeader(500)
+			_, _ = res.Write([]byte(err.Error()))
+			return
+		}
+		x := bytes.Replace(b, []byte("\"fixed_interval\""), []byte("\"interval\""), -1)
+		x = bytes.Replace(x, []byte("\"{\"order\":{\"key\":\"asc\"}}\""), []byte(""), -1)
+		x = bytes.Replace(x, []byte("\"fixed_interval\""), []byte("\"interval\""), -1)
+		r := bytes.NewReader(x)
+		m := t{r}
+		request.req.Body = &m
 	}
 
 	upstreamRequest, err := http.NewRequest(request.method, "", request.req.Body)
@@ -199,6 +225,7 @@ type Proxy struct {
 	Ak             string `json:"ak"`
 	Sk             string `json:"sk"`
 	Dump           bool   `json:"dump"`
+	Replace        bool   `json:"replace"`
 }
 
 func getAKSKFromHeader(header http.Header) (ak, sk string, err error) {
